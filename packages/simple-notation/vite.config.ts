@@ -10,6 +10,7 @@ export default defineConfig({
       fileName: 'simple-notation',
       formats: ['es', 'umd'],
     },
+    sourcemap: true,
   },
   test: {
     environment: 'jsdom',
