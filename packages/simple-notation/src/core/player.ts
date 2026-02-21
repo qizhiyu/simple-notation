@@ -38,6 +38,12 @@ export class SNPlayer {
   private repeatNextIndex = 0;
   private currentTime = 0;
 
+  // Pause/resume synchronization: track timing of current note
+  private noteScheduledAt = 0; // wallclock time (performance.now) when timeout was set
+  private noteScheduledDuration = 0; // duration passed to setTimeout
+  private pausedElapsed = 0; // elapsed time within note when paused
+  private pendingAdvance: (() => void) | null = null; // the advance callback for the current note
+
   /**
    * 构造函数，自动从 SNRuntime 获取乐谱和速度
    */
@@ -152,6 +158,7 @@ export class SNPlayer {
   public pause() {
     if (!this.isPlaying || this.isPaused) return;
     this.isPaused = true;
+    this.pausedElapsed = performance.now() - this.noteScheduledAt;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -159,13 +166,24 @@ export class SNPlayer {
   }
 
   /**
-   * 继续播放，从暂停处继续
+   * 继续播放，从暂停处继续，只等待当前音符的剩余时长
    */
   public resume() {
     if (!this.isPaused) return;
     this.isPaused = false;
     this.isPlaying = true;
-    this.scheduleNext();
+
+    if (this.pendingAdvance) {
+      const remaining = Math.max(
+        0,
+        this.noteScheduledDuration - this.pausedElapsed,
+      );
+      this.noteScheduledAt = performance.now();
+      this.noteScheduledDuration = remaining;
+      this.timer = window.setTimeout(this.pendingAdvance, remaining);
+    } else {
+      this.scheduleNext();
+    }
   }
 
   /**
@@ -180,6 +198,8 @@ export class SNPlayer {
     }
     this.currentIndex = 0;
     this.currentTime = 0;
+    this.pendingAdvance = null;
+    this.pausedElapsed = 0;
   }
 
   /**
@@ -273,7 +293,8 @@ export class SNPlayer {
     }
 
     // 推进到下一个音符
-    this.timer = window.setTimeout(() => {
+    const advanceFn = () => {
+      this.pendingAdvance = null;
       // 检查当前音符是否是其小节的最后一个音符
       const isLastNoteInMeasure =
         this.currentIndex === this.notes.length - 1 || // 如果是整个乐谱的最后一个音符
@@ -342,7 +363,12 @@ export class SNPlayer {
       }
 
       this.scheduleNext(); // 调度下一个音符 (无论是跳回还是前进)
-    }, duration);
+    };
+
+    this.pendingAdvance = advanceFn;
+    this.noteScheduledAt = performance.now();
+    this.noteScheduledDuration = duration;
+    this.timer = window.setTimeout(advanceFn, duration);
   }
 
   /**
@@ -353,6 +379,8 @@ export class SNPlayer {
     this.isPaused = false;
     this.currentIndex = 0;
     this.currentRepeatPass = 1; // 重置循环遍数
+    this.pendingAdvance = null;
+    this.pausedElapsed = 0;
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
